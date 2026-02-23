@@ -48,5 +48,5 @@ jobs:
 
       - name: Push changes
         run: |
-          git push origin main
+          git push origin master
           git push origin v$VERSION
