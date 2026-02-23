@@ -1,21 +1,14 @@
 import weakref
-from typing import Callable
-from typing import Generic, TypeVar
+from typing import Callable, Generic, TypeVar, Optional
 
+from .errors import ErrorPolicy
 from .types import Slot
 
 T = TypeVar("T")
 
 
 class _SlotRef:
-    """
-    Унифицированная weak-ссылка на слот:
-    - function
-    - bound method (instance + function)
-    """
-
     def __init__(self, slot: Callable):
-        # bound method
         if hasattr(slot, "__self__") and hasattr(slot, "__func__"):
             self._is_method = True
             self._self_ref = weakref.ref(slot.__self__)
@@ -46,13 +39,15 @@ class _SlotRef:
 
 
 class Signal(Generic[T]):
-    """
-    Runtime signal.
-    Хранит weak-ссылки на слоты.
-    """
-
-    def __init__(self) -> None:
+    def __init__(
+            self,
+            *,
+            error_policy: ErrorPolicy = ErrorPolicy.FAIL_FAST,
+            on_error: Optional[Callable[[Exception, Callable], None]] = None,
+    ) -> None:
         self._slots: list[_SlotRef] = []
+        self._error_policy = error_policy
+        self._on_error = on_error
 
     def connect(self, slot: Slot[T]) -> None:
         self._slots.append(_SlotRef(slot))
@@ -68,8 +63,19 @@ class Signal(Generic[T]):
 
         for ref in self._slots:
             fn = ref.get()
-            if fn is not None:
+            if fn is None:
+                continue
+
+            try:
                 fn(event)
                 alive.append(ref)
+            except Exception as exc:
+                if self._on_error is not None:
+                    self._on_error(exc, fn)
+
+                if self._error_policy is ErrorPolicy.FAIL_FAST:
+                    raise
+
+                # ISOLATE → продолжаем
 
         self._slots = alive
